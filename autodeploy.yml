@@ -8,3 +8,22 @@
         insertafter: EOF
     - name: Apply sysctl config-file
       shell: sysctl -p
+    - name: Update apt
+      apt:
+        update_cache: yes
+      ignore_errors: true
+    - name: Install package
+      apt: 
+        pkg:
+          - iptables-*
+- hosts: 200.100.200.100
+  tasks:
+    - name: Configure iptables
+      ansible.builtin.iptables:
+        table: nat
+        chain: POSTROUTING
+        out_interface: ens192
+        src_range: 172.20.0.0-172.20.255.255
+        jump: MASQUERADE
+    - name: Saving iptables
+      shell: iptables-save > /etc/iptables/rules.v4
