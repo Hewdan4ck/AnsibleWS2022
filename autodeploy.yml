@@ -8,15 +8,18 @@
         insertafter: EOF
     - name: Apply sysctl config-file
       shell: sysctl -p
-    - name: Update apt
-      apt:
-        update_cache: yes
+#   - name: Update apt
+#     apt:
+#       update_cache: yes
       ignore_errors: true
+
     - name: Install package
       apt: 
         pkg:
           - iptables-*
-- hosts: 200.100.200.100
+          - strongswan
+
+- hosts: 200.100.200.100 #FW
   tasks:
     - name: Configure iptables
       ansible.builtin.iptables:
@@ -26,4 +29,200 @@
         src_range: 172.20.0.0-172.20.255.255
         jump: MASQUERADE
     - name: Saving iptables
-      shell: iptables-save > /etc/iptables/rules.v4
+      community.general.iptables_state:
+        state: saved
+        path: /etc/iptables/rules.v4
+
+    - name: Check FM
+      command: hostname
+      register: hostname
+    - name: Hostname FW
+      hostname:
+        name: FW
+      when: hostname.stdout != "FW"
+    - name: Reboot after hostname
+      reboot:
+      when: hostname.stdout != "FW"
+
+    - name: copy script GRE tunnel
+      copy:
+        src: ./FW_gre.up
+        dest: /etc/FW_gre.up
+        mode: "0777"
+    - name: start the GRE tunnel script
+      shell: /etc/FW_gre.up
+      ignore_errors: true
+    - name: set crontab
+      lineinfile:
+        path: /etc/crontab
+        line: "@reboot root /etc/FW_gre.up"
+        insertafter: EOF
+    - name: Static route
+      shell: ip route add 192.168.0.0/16 via 10.20.20.2
+      ignore_errors: true
+
+    - name: copy conf IPSEC
+      copy:
+        src: ./ipsec_FW.conf
+        dest: /etc/ipsec.conf
+        mode: "0655"
+    - name: IPSEC secrets
+      lineinfile:
+        path: /etc/ipsec.secrets
+        line: "200.100.100.100 200.100.200.100 : PSK \"2022\""
+        insertafter: EOF
+    - name: IPSEC start
+      shell: ipsec start
+      ignore_errors: true 
+
+- hosts: 200.100.100.100 #CSR
+  tasks:
+    - name: Configure iptables
+      ansible.builtin.iptables:
+        table: nat
+        chain: POSTROUTING
+        out_interface: ens192
+        src_range: 192.168.0.0-192.168.255.255
+        jump: MASQUERADE
+    - name: Saving iptables
+      community.general.iptables_state:
+        state: saved
+        path: /etc/iptables/rules.v4
+
+    - name: Hostname CSR
+      hostname:
+        name: CSR
+    - name: Check CSR
+      command: hostname
+      register: hostname
+    - name: Hostname CSR
+      hostname:
+        name: CSR
+      when: hostname.stdout != "CSR"
+    - name: Reboot after hostname
+      reboot:
+      when: hostname.stdout != "CSR"
+
+    - name: copy script GRE tunnel
+      copy:
+        src: ./CSR_gre.up
+        dest: /etc/CSR_gre.up
+        mode: "0777"
+    - name: start the GRE tunnel script
+      shell: /etc/CSR_gre.up
+      ignore_errors: true
+    - name: Static route
+      shell: ip route add 172.20.0.0/16 via 10.20.20.1
+      ignore_errors: true 
+    - name: set crontab
+      lineinfile:
+        path: /etc/crontab
+        line: "@reboot root /etc/CSR_gre.up"
+        insertafter: EOF
+
+    - name: copy conf IPSEC
+      copy:
+        src: ./ipsec_CSR.conf
+        dest: /etc/ipsec.conf
+        mode: "0655"
+    - name: IPSEC secrets
+      lineinfile:
+        path: /etc/ipsec.secrets
+        line: "200.100.100.100 200.100.200.100 : PSK \"2022\""
+        insertafter: EOF
+    - name: IPSEC start
+      shell: ipsec start
+      ignore_errors: true
+
+- hosts: central
+  tasks:
+    - name: Install Package
+      apt:
+        pkg:
+          - chrony
+          - bind9
+          - nginx
+          - keepalived
+
+- hosts: 172.20.30.100 172.20.30.20
+  tasks:
+    - name: Configure Chrony
+      copy:
+        src: ./chrony_SRV.conf
+        dest: /etc/chrony/chrony.conf
+        mode: "0655"
+    - name: Restarted Chrony
+      service:
+        name: chronyd
+        state: restarted
+
+- hosts: 172.20.30.100
+  vars_files:
+    - ./vars.yml
+  tasks:
+    - name: Configure keepalived
+      copy:
+        src: ./keepalived_SRV1.conf
+        dest: /etc/keepalived/keepalived.conf
+        mode: "0644"
+    - name: DNS script
+      copy:
+        src: ./dns_check
+        dest: /usr/dns_check
+        mode: "0777"
+    - name: NTP script
+      copy:
+        src: ./ntp_check
+        dest: /usr/ntp_check
+        mode: "0777"
+    - name: Restart the keepalived
+      service:
+        name: keepalived
+        state: restarted
+    - name: Check Hostname
+      command: hostname
+      register: hostname100
+    - name: Set Hostname
+      hostname:
+        name: "{{ vm_name_srv1 }}"
+      when: hostname100.stdout != "{{ vm_name_srv1 }}"
+    - name: After change hostname - reboot
+      reboot:
+      when: hostname100.stdout != "{{ vm_name_srv1 }}"
+
+- hosts: 172.20.30.20
+  vars_files:
+    - ./vars.yml
+  tasks:
+    - name: Configure keepalived
+      copy:
+        src: ./keepalived_SRV2.conf
+        dest: /etc/keepalived/keepalived.conf
+        mode: "0644"
+    - name: DNS script
+      copy:
+        src: ./dns_check
+        dest: /usr/dns_check
+        mode: "0777"
+    - name: NTP script
+      copy:
+        src: ./ntp_check
+        dest: /usr/ntp_check
+        mode: "0777"
+    - name: Restart the keepalived
+      service:
+        name: keepalived
+        state: restarted
+
+    - name: Check Hostname
+      command: hostname
+      register: hostname200
+    - name: Set Hostname
+      hostname:
+        name: "{{ vm_name_srv2 }}"
+      when: hostname200.stdout != "{{ vm_name_srv2 }}"
+    - name: After change hostname - reboot
+      reboot:
+      when: hostname200.stdout != "{{ vm_name_srv2 }}"
+
+
