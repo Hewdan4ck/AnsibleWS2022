@@ -160,6 +160,7 @@
           - docker.io
           - ufw
           - pip
+          - curl
 
 - hosts: 172.20.30.100 172.20.30.20
   tasks:
@@ -168,16 +169,39 @@
         state: enabled
         rule: allow
         port: '22'
+      ufw:
+        rule: allow
+        port: '2022'
     - name: UFW port for https
       ufw:
-        state: enabled
         rule: allow
         port: '443'
     - name: UFW port for http
       ufw:
-        state: enabled
         rule: allow
         port: '80'
+
+    - name: Open port for Docker-compose
+      shell: curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    - name: Fix permissions for Docker-compose
+      shell: chmod +x /usr/local/bin/docker-compose
+    - name: Install Docker module for python
+      pip:
+        name: docker-compose
+    - name: Create folder
+      file:
+        path: /opt/project
+        state: directory
+        mode: '0777'
+    - name: Copy DockerComposition
+      copy:
+        src: ./docker-compose.yml
+        dest: /opt/project/docker-compose.yml
+    - name: deploy DockerCompose
+      docker_compose:
+        project_src: /opt/project
+        files:
+          - docker-compose.yml
     - name: Configure Chrony
       copy:
         src: ./chrony_SRV.conf
@@ -232,6 +256,14 @@
         image: beezzlot/docker-test
         ports:
           - "80:8080"
+    - name: COnfigure SSH
+      copy:
+        src: ./sshd_config
+        dest: /etc/ssh/sshd_config
+    - name: Restart ssh
+      service:
+        name: sshd
+        state: restarted
 
 - hosts: 172.20.30.20 #SRV-2
   vars_files:
